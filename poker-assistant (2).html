@@ -1349,24 +1349,41 @@ window.quickJoin = async function(session, slot, name, dbUrl) {
   dbUrl = dbUrl.replace(/\/+$/, '');
   const errEl = document.getElementById('quickJoinErr');
   if (!dbUrl) { if (errEl) errEl.textContent = 'Please enter the Database URL.'; return; }
-  if (errEl) errEl.textContent = 'Connecting\u2026';
+  if (errEl) errEl.textContent = 'Connecting…';
   try {
+    // Fetch config via Firebase REST — works for any region URL
     const fetchUrl = `${dbUrl}/sessions/${encodeURIComponent(session)}/config.json`;
     const resp = await fetch(fetchUrl);
-    if (!resp.ok) throw new Error(`Cannot reach database (${resp.status}). Check your URL.`);
+    if (!resp.ok) throw new Error(`Cannot reach database (${resp.status}). Check your Database URL.`);
     const cfg = await resp.json();
     if (!cfg || cfg === 'null' || !cfg.apiKey) {
       throw new Error('Session not found. Make sure the host has clicked "Host a Game" first.');
     }
-    document.getElementById('dbUrl').value = dbUrl;
-    document.getElementById('apiKey').value = cfg.apiKey;
-    document.getElementById('projectId').value = cfg.projectId;
-    document.getElementById('appId').value = cfg.appId;
-    document.getElementById('sessionName').value = session;
-    document.getElementById('playerName').value = name;
-    document.getElementById('playerSlot').value = slot;
-    document.getElementById('setupScreen').style.display = 'none';
-    await window.joinAsPlayer();
+    // Directly init Firebase and join — do NOT touch the DOM form fields
+    // (the setup form was replaced by the connecting screen)
+    try {
+      const app = initializeApp(
+        { apiKey: cfg.apiKey, projectId: cfg.projectId, appId: cfg.appId, databaseURL: dbUrl },
+        'poker-player-' + Date.now()
+      );
+      db = getDatabase(app);
+    } catch(e) { throw new Error('Firebase init failed: ' + e.message); }
+
+    sessionKey = session;
+    sessionRef = ref(db, 'sessions/' + sessionKey);
+    myPlayerIdx = parseInt(slot);
+    myPlayerName = name || ('Player ' + (parseInt(slot) + 1));
+    isHost = false;
+    pvCards = [null, null];
+
+    // Register player name in Firebase
+    await update(ref(db, `sessions/${sessionKey}/players/${myPlayerIdx}`), { name: myPlayerName });
+
+    // Hide setup, show player view
+    const ss = document.getElementById('setupScreen');
+    if (ss) ss.style.display = 'none';
+    subscribeToSession();
+    showPlayerView();
   } catch (e) {
     const el = document.getElementById('quickJoinErr');
     if (el) el.textContent = e.message || 'Connection failed. Check the URL and try again.';
