@@ -816,8 +816,9 @@ function renderPlayersHost() {
 
 function buildPlayerUrl(pi, name) {
   const base = window.location.href.split('?')[0];
-  // Config stored in Firebase — short scannable URL
-  return `${base}?session=${encodeURIComponent(sessionKey)}&slot=${pi}&name=${encodeURIComponent(name)}`;
+  const dbUrl = encodeURIComponent(document.getElementById('dbUrl').value.trim());
+  // dbUrl is not secret — safe to embed in QR. apiKey stays off the QR.
+  return `${base}?session=${encodeURIComponent(sessionKey)}&slot=${pi}&name=${encodeURIComponent(name)}&db=${dbUrl}`;
 }
 
 /* ═══════════════════════════════════════════════
@@ -1300,53 +1301,64 @@ window.toggleRankings=function(){
 };
 
 /* ═══════════════════════════════════════════════
-   AUTO-JOIN FROM URL PARAMS
-   QR URL is short: ?session=X&slot=Y&name=Z
-   We fetch Firebase config from session via REST.
-   Host must share their Database URL separately
-   (shown in QR modal as a copyable link).
+   QR URL contains ?session=X&slot=Y&name=Z&db=<encoded-dbUrl>
+   dbUrl is not secret — safe to embed. apiKey stays off the QR.
+   On load: read db from URL, fetch full config via Firebase REST, auto-join.
 ═══════════════════════════════════════════════ */
 (async function checkUrlParams() {
   const p = new URLSearchParams(window.location.search);
   const session = p.get('session');
   const slot = p.get('slot');
   const name = decodeURIComponent(p.get('name') || '');
+  const dbUrl = decodeURIComponent(p.get('db') || '').replace(/\/+$/, '');
   if (!session || slot === null) return;
 
-  // Show join screen
   const ss = document.getElementById('setupScreen');
   ss.style.cssText = 'display:flex;align-items:center;justify-content:center;min-height:100vh;position:relative;z-index:1;';
-  ss.innerHTML = `
-    <div style="width:100%;max-width:400px;padding:0 1.5rem;">
-      <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--gold);text-align:center;margin-bottom:0.4rem;">♠ Poker</div>
-      <div style="color:var(--text-muted);font-size:0.82rem;text-align:center;margin-bottom:1.75rem;letter-spacing:0.06em;text-transform:uppercase;">Joining as ${name || 'Player'}</div>
-      <div style="background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:14px;padding:1.5rem;margin-bottom:1rem;">
-        <div style="font-family:'DM Mono',monospace;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.4rem;">Firebase Database URL</div>
-        <input id="quickDbUrl" type="url" placeholder="https://your-project-default-rtdb.firebaseio.com"
-          style="width:100%;background:rgba(0,0,0,0.35);border:1px solid rgba(201,168,76,0.25);border-radius:8px;color:var(--text-main);font-family:'DM Sans',sans-serif;font-size:0.9rem;padding:0.65rem 0.8rem;outline:none;-webkit-appearance:none;"/>
-        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;line-height:1.5;">Ask the host for their Firebase Database URL — it looks like https://your-project-rtdb.firebaseio.com</div>
-      </div>
-      <button onclick="quickJoin('${encodeURIComponent(session)}','${slot}','${encodeURIComponent(name)}')"
-        style="width:100%;background:var(--gold);color:#0f2218;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:500;padding:0.9rem;cursor:pointer;margin-bottom:0.5rem;">
-        Join Game
-      </button>
-      <div id="quickJoinErr" style="color:#e87c7c;font-size:0.82rem;text-align:center;min-height:1.2rem;margin-top:0.3rem;"></div>
-    </div>`;
+
+  if (dbUrl) {
+    ss.innerHTML = `
+      <div style="text-align:center;padding:3rem 1.5rem;">
+        <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--gold);margin-bottom:0.75rem;">\u2660 Poker</div>
+        <div style="color:var(--text-muted);">Connecting as <strong style="color:var(--cream)">${name || 'Player'}</strong>\u2026</div>
+        <div id="quickJoinErr" style="color:#e87c7c;font-size:0.82rem;margin-top:1rem;"></div>
+      </div>`;
+    await window.quickJoin(session, slot, name, dbUrl);
+  } else {
+    ss.innerHTML = `
+      <div style="width:100%;max-width:400px;padding:0 1.5rem;">
+        <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--gold);text-align:center;margin-bottom:0.4rem;">\u2660 Poker</div>
+        <div style="color:var(--text-muted);font-size:0.82rem;text-align:center;margin-bottom:1.75rem;text-transform:uppercase;letter-spacing:0.06em;">Joining as ${name || 'Player'}</div>
+        <div style="background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:14px;padding:1.5rem;margin-bottom:1rem;">
+          <div style="font-family:'DM Mono',monospace;font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.4rem;">Firebase Database URL</div>
+          <input id="quickDbUrl" type="url" placeholder="https://your-project-rtdb.asia-southeast1.firebasedatabase.app"
+            style="width:100%;background:rgba(0,0,0,0.35);border:1px solid rgba(201,168,76,0.25);border-radius:8px;color:var(--text-main);font-family:'DM Sans',sans-serif;font-size:0.88rem;padding:0.65rem 0.8rem;outline:none;-webkit-appearance:none;"/>
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;line-height:1.5;">Ask the host for their Firebase Database URL</div>
+        </div>
+        <button onclick="window.quickJoin('${session}','${slot}','${name}',null)"
+          style="width:100%;background:var(--gold);color:#0f2218;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:500;padding:0.9rem;cursor:pointer;">
+          Join Game
+        </button>
+        <div id="quickJoinErr" style="color:#e87c7c;font-size:0.82rem;text-align:center;min-height:1.2rem;margin-top:0.5rem;"></div>
+      </div>`;
+  }
 })();
 
-window.quickJoin = async function(sessionEnc, slot, nameEnc) {
-  const session = decodeURIComponent(sessionEnc);
-  const name = decodeURIComponent(nameEnc);
-  const dbUrl = (document.getElementById('quickDbUrl')?.value || '').trim().replace(/\/+$/, '');
+window.quickJoin = async function(session, slot, name, dbUrl) {
+  if (!dbUrl) dbUrl = (document.getElementById('quickDbUrl')?.value || '').trim();
+  dbUrl = dbUrl.replace(/\/+$/, '');
   const errEl = document.getElementById('quickJoinErr');
-  if (!dbUrl) { if(errEl) errEl.textContent = 'Please enter the Database URL.'; return; }
-  if(errEl) errEl.textContent = 'Connecting…';
+  if (!dbUrl) { if (errEl) errEl.textContent = 'Please enter the Database URL.'; return; }
+  if (errEl) errEl.textContent = 'Connecting\u2026';
   try {
-    const resp = await fetch(`${dbUrl}/sessions/${session}/config.json`);
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const fetchUrl = `${dbUrl}/sessions/${encodeURIComponent(session)}/config.json`;
+    const resp = await fetch(fetchUrl);
+    if (!resp.ok) throw new Error(`Cannot reach database (${resp.status}). Check your URL.`);
     const cfg = await resp.json();
-    if (!cfg || !cfg.apiKey) throw new Error('No config in session. Make sure the host has started the game.');
-    document.getElementById('dbUrl').value = cfg.dbUrl || dbUrl;
+    if (!cfg || cfg === 'null' || !cfg.apiKey) {
+      throw new Error('Session not found. Make sure the host has clicked "Host a Game" first.');
+    }
+    document.getElementById('dbUrl').value = dbUrl;
     document.getElementById('apiKey').value = cfg.apiKey;
     document.getElementById('projectId').value = cfg.projectId;
     document.getElementById('appId').value = cfg.appId;
@@ -1355,8 +1367,9 @@ window.quickJoin = async function(sessionEnc, slot, nameEnc) {
     document.getElementById('playerSlot').value = slot;
     document.getElementById('setupScreen').style.display = 'none';
     await window.joinAsPlayer();
-  } catch(e) {
-    if(errEl) errEl.textContent = e.message || 'Could not connect. Check the URL and try again.';
+  } catch (e) {
+    const el = document.getElementById('quickJoinErr');
+    if (el) el.textContent = e.message || 'Connection failed. Check the URL and try again.';
   }
 };
 
