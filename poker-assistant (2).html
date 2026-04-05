@@ -1300,11 +1300,70 @@ window.toggleRankings=function(){
   else{collapse.style.maxHeight=collapse.scrollHeight+'px';requestAnimationFrame(()=>{collapse.style.maxHeight='0';});chevron.style.transform='rotate(0deg)';}
 };
 
+
 /* ═══════════════════════════════════════════════
-   QR URL contains ?session=X&slot=Y&name=Z&db=<encoded-dbUrl>
-   dbUrl is not secret — safe to embed. apiKey stays off the QR.
-   On load: read db from URL, fetch full config via Firebase REST, auto-join.
+   QR AUTO-JOIN
+   URL: ?session=X&slot=Y&name=Z&db=<encodedDbUrl>
+   quickJoin is defined first, then called at bottom.
 ═══════════════════════════════════════════════ */
+window.quickJoin = async function(session, slot, name, dbUrl) {
+  if (!dbUrl) dbUrl = (document.getElementById('quickDbUrl')?.value || '').trim();
+  dbUrl = (dbUrl || '').replace(/\/+$/, '');
+  const showErr = (msg) => {
+    const el = document.getElementById('quickJoinErr');
+    if (el) el.textContent = msg;
+    console.error('[quickJoin]', msg);
+  };
+  if (!dbUrl) { showErr('Please enter the Database URL.'); return; }
+  const el = document.getElementById('quickJoinErr');
+  if (el) el.textContent = 'Fetching session config\u2026';
+  try {
+    // Step 1: fetch config via Firebase REST .json endpoint
+    const fetchUrl = `${dbUrl}/sessions/${encodeURIComponent(session)}/config.json`;
+    console.log('[quickJoin] fetching:', fetchUrl);
+    const resp = await fetch(fetchUrl);
+    console.log('[quickJoin] fetch status:', resp.status);
+    if (!resp.ok) throw new Error(`Database returned ${resp.status}. Check your Database URL.`);
+    const cfg = await resp.json();
+    console.log('[quickJoin] config:', cfg);
+    if (!cfg || cfg === 'null' || !cfg.apiKey) {
+      throw new Error('Session not found. Ask the host to click "Host a Game" first.');
+    }
+    if (el) el.textContent = 'Initialising Firebase\u2026';
+    // Step 2: init Firebase directly (bypass DOM form)
+    const app = initializeApp(
+      { apiKey: cfg.apiKey, projectId: cfg.projectId, appId: cfg.appId, databaseURL: dbUrl },
+      'poker-player-' + Date.now()
+    );
+    db = getDatabase(app);
+    console.log('[quickJoin] Firebase ready');
+
+    // Step 3: set globals
+    sessionKey = session;
+    sessionRef = ref(db, 'sessions/' + sessionKey);
+    myPlayerIdx = parseInt(slot);
+    myPlayerName = name || ('Player ' + (parseInt(slot) + 1));
+    isHost = false;
+    pvCards = [null, null];
+
+    if (el) el.textContent = 'Registering player\u2026';
+    // Step 4: write player name
+    await update(ref(db, `sessions/${sessionKey}/players/${myPlayerIdx}`), { name: myPlayerName });
+    console.log('[quickJoin] registered as', myPlayerName, 'slot', myPlayerIdx);
+
+    // Step 5: show player view
+    const ss = document.getElementById('setupScreen');
+    if (ss) ss.style.display = 'none';
+    subscribeToSession();
+    showPlayerView();
+    console.log('[quickJoin] done!');
+  } catch (e) {
+    console.error('[quickJoin] error:', e);
+    showErr(e.message || 'Connection failed.');
+  }
+};
+
+// Run auto-join after all functions are defined
 (async function checkUrlParams() {
   const p = new URLSearchParams(window.location.search);
   const session = p.get('session');
@@ -1317,14 +1376,16 @@ window.toggleRankings=function(){
   ss.style.cssText = 'display:flex;align-items:center;justify-content:center;min-height:100vh;position:relative;z-index:1;';
 
   if (dbUrl) {
+    // Auto-connect from QR
     ss.innerHTML = `
-      <div style="text-align:center;padding:3rem 1.5rem;">
+      <div style="text-align:center;padding:3rem 1.5rem;max-width:400px;">
         <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--gold);margin-bottom:0.75rem;">\u2660 Poker</div>
-        <div style="color:var(--text-muted);">Connecting as <strong style="color:var(--cream)">${name || 'Player'}</strong>\u2026</div>
-        <div id="quickJoinErr" style="color:#e87c7c;font-size:0.82rem;margin-top:1rem;"></div>
+        <div style="color:var(--text-muted);margin-bottom:0.5rem;">Joining as <strong style="color:var(--cream)">${name || 'Player'}</strong></div>
+        <div id="quickJoinErr" style="color:#e87c7c;font-size:0.82rem;margin-top:1rem;min-height:1.2rem;"></div>
       </div>`;
     await window.quickJoin(session, slot, name, dbUrl);
   } else {
+    // No db in URL — show manual form
     ss.innerHTML = `
       <div style="width:100%;max-width:400px;padding:0 1.5rem;">
         <div style="font-family:'Playfair Display',serif;font-size:2rem;color:var(--gold);text-align:center;margin-bottom:0.4rem;">\u2660 Poker</div>
@@ -1333,7 +1394,6 @@ window.toggleRankings=function(){
           <div style="font-family:'DM Mono',monospace;font-size:0.65rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.4rem;">Firebase Database URL</div>
           <input id="quickDbUrl" type="url" placeholder="https://your-project-rtdb.asia-southeast1.firebasedatabase.app"
             style="width:100%;background:rgba(0,0,0,0.35);border:1px solid rgba(201,168,76,0.25);border-radius:8px;color:var(--text-main);font-family:'DM Sans',sans-serif;font-size:0.88rem;padding:0.65rem 0.8rem;outline:none;-webkit-appearance:none;"/>
-          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;line-height:1.5;">Ask the host for their Firebase Database URL</div>
         </div>
         <button onclick="window.quickJoin('${session}','${slot}','${name}',null)"
           style="width:100%;background:var(--gold);color:#0f2218;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:500;padding:0.9rem;cursor:pointer;">
@@ -1343,52 +1403,6 @@ window.toggleRankings=function(){
       </div>`;
   }
 })();
-
-window.quickJoin = async function(session, slot, name, dbUrl) {
-  if (!dbUrl) dbUrl = (document.getElementById('quickDbUrl')?.value || '').trim();
-  dbUrl = dbUrl.replace(/\/+$/, '');
-  const errEl = document.getElementById('quickJoinErr');
-  if (!dbUrl) { if (errEl) errEl.textContent = 'Please enter the Database URL.'; return; }
-  if (errEl) errEl.textContent = 'Connecting…';
-  try {
-    // Fetch config via Firebase REST — works for any region URL
-    const fetchUrl = `${dbUrl}/sessions/${encodeURIComponent(session)}/config.json`;
-    const resp = await fetch(fetchUrl);
-    if (!resp.ok) throw new Error(`Cannot reach database (${resp.status}). Check your Database URL.`);
-    const cfg = await resp.json();
-    if (!cfg || cfg === 'null' || !cfg.apiKey) {
-      throw new Error('Session not found. Make sure the host has clicked "Host a Game" first.');
-    }
-    // Directly init Firebase and join — do NOT touch the DOM form fields
-    // (the setup form was replaced by the connecting screen)
-    try {
-      const app = initializeApp(
-        { apiKey: cfg.apiKey, projectId: cfg.projectId, appId: cfg.appId, databaseURL: dbUrl },
-        'poker-player-' + Date.now()
-      );
-      db = getDatabase(app);
-    } catch(e) { throw new Error('Firebase init failed: ' + e.message); }
-
-    sessionKey = session;
-    sessionRef = ref(db, 'sessions/' + sessionKey);
-    myPlayerIdx = parseInt(slot);
-    myPlayerName = name || ('Player ' + (parseInt(slot) + 1));
-    isHost = false;
-    pvCards = [null, null];
-
-    // Register player name in Firebase
-    await update(ref(db, `sessions/${sessionKey}/players/${myPlayerIdx}`), { name: myPlayerName });
-
-    // Hide setup, show player view
-    const ss = document.getElementById('setupScreen');
-    if (ss) ss.style.display = 'none';
-    subscribeToSession();
-    showPlayerView();
-  } catch (e) {
-    const el = document.getElementById('quickJoinErr');
-    if (el) el.textContent = e.message || 'Connection failed. Check the URL and try again.';
-  }
-};
 
 </script>
 </body>
